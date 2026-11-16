@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -std=c++20
+    - -I/home/felix/uni/guided_research/core-PBC/mlir/include
+    - -I/home/felix/uni/guided_research/core-PBC/build/release/mlir/include
+    - -isystem/opt/llvm-23.1.0/include
+    - -DPBC_HARNESS_OUTPUT_DIR="/home/felix/uni/guided_research/core-PBC/PBC_Harness/outputs"

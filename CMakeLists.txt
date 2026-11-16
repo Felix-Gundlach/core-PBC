@@ -124,6 +124,11 @@ add_custom_target(mqt-core-lint-headers)
 
 add_subdirectory(mlir)
 
+option(MQT_BUILD_PBC_HARNESS "Build the local PBC harness" OFF)
+if(MQT_BUILD_PBC_HARNESS)
+  add_subdirectory(PBC_Harness)
+endif()
+
 # Configure `mlir-doc` only when this project owns the target.
 if(PROJECT_IS_TOP_LEVEL)
   add_custom_command(
