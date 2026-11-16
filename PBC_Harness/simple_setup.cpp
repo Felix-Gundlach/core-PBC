@@ -24,6 +24,7 @@
 #include "mlir/Pass/Pass.h" // IWYU pragma: keep
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/Passes.h"
 #include "mlir/Transforms/ViewOpGraph.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -39,9 +40,6 @@
 
 // Namespaces
 using namespace mlir;
-namespace {
-enum class EmitMode : uint8_t { Stdout, File, Dot };
-}
 
 // Target Programs
 extern const char* const BELL_STATE_QASM;
@@ -57,10 +55,32 @@ cx q[0], q[1];
 c = measure q;
 )";
 
+namespace {
+enum class EmitMode : uint8_t { Stdout, File, Dot };
+} // namespace
+
 // Output files, relative to PBC_HARNESS_OUTPUT_DIR. The build sets that macro
 // to PBC_Harness/outputs.
 static constexpr const char* MLIR_OUTPUT_FILE = "qc-output.qc.mlir";
 static constexpr const char* DOT_OUTPUT_FILE = "qc-output.dot";
+
+/// Remove duplicate constants and other redundant operations from the module.
+///
+/// The canonicalizer moves constants to the start of the function and merges
+/// equal constants. CSE then merges equal operations that have no side effects.
+/// CSE does not merge two `memref.load` operations if any write occurs between
+/// them. QC gates write the qubit resource, so each qubit reload stays.
+///
+/// @param moduleOp The module to simplify in place.
+/// @return Success if all passes succeed, failure otherwise.
+namespace {
+LogicalResult simplifyModule(ModuleOp moduleOp) {
+  PassManager pm(moduleOp.getContext());
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+  return pm.run(moduleOp);
+}
+} // namespace
 
 // me code :)
 int main(int argc, char** argv) {
@@ -74,6 +94,10 @@ int main(int argc, char** argv) {
                      "Write the view-op-graph Graphviz output to "
                      "PBC_Harness/outputs/qc-output.dot")),
       llvm::cl::init(EmitMode::Stdout));
+  llvm::cl::opt<bool> simplify(
+      "simplify",
+      llvm::cl::desc("Run canonicalize and CSE before emitting the IR"),
+      llvm::cl::init(false));
   llvm::cl::ParseCommandLineOptions(argc, argv, "PBC simple setup harness\n");
 
   DialectRegistry registry;
@@ -88,6 +112,10 @@ int main(int argc, char** argv) {
   auto moduleOp = qc::translateOpenQASMToQC(qasmString, &context);
   if (!moduleOp) {
     // been told errors go to the context, so I shouldn't need to do stuff here
+    return 1;
+  }
+
+  if (simplify && failed(simplifyModule(*moduleOp))) {
     return 1;
   }
 
