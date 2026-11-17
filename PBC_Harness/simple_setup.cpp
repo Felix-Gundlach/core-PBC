@@ -84,6 +84,9 @@ LogicalResult simplifyModule(ModuleOp moduleOp) {
 
 // me code :)
 int main(int argc, char** argv) {
+  /*
+   * Command Line Options
+   */
   llvm::cl::opt<EmitMode> emitMode(
       "emit", llvm::cl::desc("Where to write the QC IR"),
       llvm::cl::values(
@@ -100,6 +103,9 @@ int main(int argc, char** argv) {
       llvm::cl::init(false));
   llvm::cl::ParseCommandLineOptions(argc, argv, "PBC simple setup harness\n");
 
+  /*
+   * Preparing Dialects
+   */
   DialectRegistry registry;
   registry.insert<arith::ArithDialect, cbit::CBitDialect, func::FuncDialect,
                   math::MathDialect, memref::MemRefDialect,
@@ -108,6 +114,9 @@ int main(int argc, char** argv) {
   context.appendDialectRegistry(registry);
   context.loadAllAvailableDialects();
 
+  /*
+   * QC-MLIR preparation
+   */
   std::string qasmString = BELL_STATE_QASM;
   auto moduleOp = qc::translateOpenQASMToQC(qasmString, &context);
   if (!moduleOp) {
@@ -119,6 +128,13 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  /*
+   * Time to implement a PBC conversion pass
+   */
+
+  /*
+   * Output MLIR
+   */
   if (emitMode == EmitMode::Stdout) {
     moduleOp->print(llvm::outs());
     return 0;
