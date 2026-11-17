@@ -8,9 +8,12 @@
  * Licensed under the MIT License
  */
 
+#include "mqt/Conversion/QCToQCO/QCToQCO.h"
 #include "mqt/Dialect/CBit/IR/CBitDialect.h"
 #include "mqt/Dialect/MQT/IR/MQTDialect.h"
 #include "mqt/Dialect/QC/IR/QCDialect.h"
+#include "mqt/Dialect/QCO/IR/QCODialect.h"
+#include "mqt/Dialect/QTensor/IR/QTensorDialect.h"
 #include "mqt/Target/OpenQASM/TranslateOpenQASMToQC.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -60,27 +63,12 @@ enum class EmitMode : uint8_t { Stdout, File, Dot };
 } // namespace
 
 // Output files, relative to PBC_HARNESS_OUTPUT_DIR. The build sets that macro
-// to PBC_Harness/outputs.
-static constexpr const char* MLIR_OUTPUT_FILE = "qc-output.qc.mlir";
-static constexpr const char* DOT_OUTPUT_FILE = "qc-output.dot";
-
-/// Remove duplicate constants and other redundant operations from the module.
-///
-/// The canonicalizer moves constants to the start of the function and merges
-/// equal constants. CSE then merges equal operations that have no side effects.
-/// CSE does not merge two `memref.load` operations if any write occurs between
-/// them. QC gates write the qubit resource, so each qubit reload stays.
-///
-/// @param moduleOp The module to simplify in place.
-/// @return Success if all passes succeed, failure otherwise.
-namespace {
-LogicalResult simplifyModule(ModuleOp moduleOp) {
-  PassManager pm(moduleOp.getContext());
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  return pm.run(moduleOp);
-}
-} // namespace
+// to PBC_Harness/outputs. QC and QCO output use different files, so the two
+// stages can be compared.
+static constexpr const char* QC_MLIR_OUTPUT_FILE = "qc-output.qc.mlir";
+static constexpr const char* QC_DOT_OUTPUT_FILE = "qc-output.dot";
+static constexpr const char* QCO_MLIR_OUTPUT_FILE = "qco-output.qco.mlir";
+static constexpr const char* QCO_DOT_OUTPUT_FILE = "qco-output.dot";
 
 // me code :)
 int main(int argc, char** argv) {
@@ -88,18 +76,23 @@ int main(int argc, char** argv) {
    * Command Line Options
    */
   llvm::cl::opt<EmitMode> emitMode(
-      "emit", llvm::cl::desc("Where to write the QC IR"),
+      "emit", llvm::cl::desc("Where to write the IR"),
       llvm::cl::values(
           clEnumValN(EmitMode::Stdout, "stdout", "Print the IR to stdout"),
           clEnumValN(EmitMode::File, "file",
-                     "Write the IR to PBC_Harness/outputs/qc-output.qc.mlir"),
+                     "Write the IR to PBC_Harness/outputs/qc-output.qc.mlir "
+                     "(qco-output.qco.mlir with --lower-to-qco)"),
           clEnumValN(EmitMode::Dot, "dot",
                      "Write the view-op-graph Graphviz output to "
-                     "PBC_Harness/outputs/qc-output.dot")),
+                     "PBC_Harness/outputs/qc-output.dot "
+                     "(qco-output.dot with --lower-to-qco)")),
       llvm::cl::init(EmitMode::Stdout));
   llvm::cl::opt<bool> simplify(
-      "simplify",
-      llvm::cl::desc("Run canonicalize and CSE before emitting the IR"),
+      "simplify", llvm::cl::desc("Run canonicalize and CSE on the QC IR"),
+      llvm::cl::init(false));
+  llvm::cl::opt<bool> lowerQCO(
+      "lower-to-qco",
+      llvm::cl::desc("Convert the QC IR to QCO before emitting it"),
       llvm::cl::init(false));
   llvm::cl::ParseCommandLineOptions(argc, argv, "PBC simple setup harness\n");
 
@@ -109,13 +102,14 @@ int main(int argc, char** argv) {
   DialectRegistry registry;
   registry.insert<arith::ArithDialect, cbit::CBitDialect, func::FuncDialect,
                   math::MathDialect, memref::MemRefDialect,
-                  mlir::mqt::MQTDialect, qc::QCDialect, scf::SCFDialect>();
+                  mlir::mqt::MQTDialect, qc::QCDialect, qco::QCODialect,
+                  qtensor::QTensorDialect, scf::SCFDialect>();
   MLIRContext context;
   context.appendDialectRegistry(registry);
   context.loadAllAvailableDialects();
 
   /*
-   * QC-MLIR preparation
+   * QC(O)-MLIR preparation
    */
   std::string qasmString = BELL_STATE_QASM;
   auto moduleOp = qc::translateOpenQASMToQC(qasmString, &context);
@@ -124,8 +118,24 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if (simplify && failed(simplifyModule(*moduleOp))) {
-    return 1;
+  if (simplify) {
+    PassManager pm(&context);
+    // Canonicalizer moves constants to function start and merges equal
+    // constants.
+    pm.addPass(createCanonicalizerPass());
+    // CSE  merges equal operations without side effects.
+    pm.addPass(createCSEPass());
+    if (failed(pm.run(*moduleOp))) {
+      return 1;
+    }
+  }
+
+  if (lowerQCO) {
+    PassManager pm(&context);
+    pm.addPass(createQCToQCO());
+    if (failed(pm.run(*moduleOp))) {
+      return 1;
+    }
   }
 
   /*
@@ -147,9 +157,13 @@ int main(int argc, char** argv) {
                  << "\n";
     return 1;
   }
-  llvm::sys::path::append(outputFile, emitMode == EmitMode::File
-                                          ? MLIR_OUTPUT_FILE
-                                          : DOT_OUTPUT_FILE);
+  if (emitMode == EmitMode::File) {
+    llvm::sys::path::append(outputFile, lowerQCO ? QCO_MLIR_OUTPUT_FILE
+                                                 : QC_MLIR_OUTPUT_FILE);
+  } else {
+    llvm::sys::path::append(outputFile, lowerQCO ? QCO_DOT_OUTPUT_FILE
+                                                 : QC_DOT_OUTPUT_FILE);
+  }
   llvm::raw_fd_ostream os(outputFile, ec);
   if (ec) {
     llvm::errs() << "Cannot open " << outputFile << ": " << ec.message()

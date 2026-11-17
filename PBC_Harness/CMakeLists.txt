@@ -13,7 +13,10 @@ target_link_libraries(
   pbc-simple-setup
   PRIVATE
     MLIRQCOpenQASMTranslation
+    MLIRQCToQCO
     MLIRQCDialect
+    MLIRQCODialect
+    MLIRQTensorDialect
     MLIRMQTDialect
     MLIRCBitDialect
     MLIRArithDialect

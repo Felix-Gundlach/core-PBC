@@ -34,8 +34,16 @@ what it writes:
 Files always go to `PBC_Harness/outputs`. It is excluded from Git locally
 through `.git/info/exclude`.
 
-Both launch configs in `.vscode/launch.json` build the harness first, then run
-it under `gdb`.
+Two flags change the IR before it is written:
 
-`pbc: render op graph` task converts `qc-output.dot` to `outputs/qc-output.png`
-with `dot` and opens the image in VS Code.
+| Argument         | Effect                                                         |
+| ---------------- | -------------------------------------------------------------- |
+| `--simplify`     | Runs canonicalize and CSE on the QC IR                         |
+| `--lower-to-qco` | Runs `qc-to-qco` after `--simplify`                            |
+
+All launch configs in `.vscode/launch.json` build the harness first, then run it
+under `gdb`.
+
+`pbc: render qc op graph` and `pbc: render qco op graph` convert the `.dot` file
+of their stage to a `.png` in `outputs` with `dot` and open the image in VS
+Code. `pbc: render op graph` asks which of the two to render.
